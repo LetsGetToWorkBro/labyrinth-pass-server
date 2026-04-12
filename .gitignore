@@ -1,0 +1,7 @@
+node_modules/
+*.p12
+pass_cert.pem
+pass_key.pem
+wwdr.pem
+*.pkpass
+.env

@@ -1,0 +1,70 @@
+{
+  "formatVersion": 1,
+  "passTypeIdentifier": "pass.vision.labyrinth.member",
+  "teamIdentifier": "CA2KJBHNWW",
+  "organizationName": "Labyrinth Brazilian Jiu Jitsu",
+  "serialNumber": "PLACEHOLDER",
+  "description": "Labyrinth BJJ Member Pass",
+  "backgroundColor": "rgb(10,10,10)",
+  "foregroundColor": "rgb(240,240,240)",
+  "labelColor": "rgb(200,162,76)",
+  "generic": {
+    "headerFields": [
+      {
+        "key": "belt",
+        "label": "BELT",
+        "value": "Black Belt",
+        "textAlignment": "PKTextAlignmentRight"
+      }
+    ],
+    "primaryFields": [
+      {
+        "key": "name",
+        "label": "MEMBER",
+        "value": "Member Name"
+      }
+    ],
+    "secondaryFields": [
+      {
+        "key": "gym",
+        "label": "GYM",
+        "value": "Labyrinth BJJ"
+      },
+      {
+        "key": "location",
+        "label": "LOCATION",
+        "value": "Fulshear, TX"
+      }
+    ],
+    "backFields": [
+      {
+        "key": "tagline",
+        "label": "",
+        "value": "迷宮 · Labyrinth Brazilian Jiu Jitsu"
+      },
+      {
+        "key": "website",
+        "label": "Member Portal",
+        "value": "app.labyrinth.vision"
+      },
+      {
+        "key": "support",
+        "label": "Contact",
+        "value": "info@labyrinth.vision"
+      },
+      {
+        "key": "address",
+        "label": "Location",
+        "value": "Fulshear, TX"
+      }
+    ]
+  },
+  "barcodes": [
+    {
+      "format": "PKBarcodeFormatQR",
+      "message": "PLACEHOLDER",
+      "messageEncoding": "iso-8859-1",
+      "altText": "Scan to verify"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "name": "labyrinth-pass-server",
+  "version": "1.0.0",
+  "description": "Apple Wallet pass server for Labyrinth BJJ",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "passkit-generator": "^3.5.7",
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0"
+  }
+}
