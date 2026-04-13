@@ -5,3 +5,4 @@ pass_key.pem
 wwdr.pem
 *.pkpass
 .env
+google-service-account.json

@@ -86,6 +86,33 @@ async function generatePass(member) {
   return { buffer: pass.getAsBuffer(), serial, token };
 }
 
+// ── Google Wallet config ─────────────────────────────────────────────
+const GOOGLE_ISSUER_ID = process.env.GOOGLE_ISSUER_ID || '3388000000023113573';
+const GOOGLE_CLASS_SUFFIX = 'labyrinth_member';
+const GOOGLE_CLASS_ID = `${GOOGLE_ISSUER_ID}.${GOOGLE_CLASS_SUFFIX}`;
+
+function getGoogleServiceAccount() {
+  if (process.env.GOOGLE_SERVICE_ACCOUNT) {
+    return JSON.parse(Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT, 'base64').toString('utf8'));
+  }
+  const filePath = path.join(__dirname, 'google-service-account.json');
+  if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  return null;
+}
+
+// ── Google Wallet belt color mapping (hex strings) ───────────────────
+const GOOGLE_BELT_COLORS = {
+  white:  { bg: '#F5F5F5', text: '#111111' },
+  blue:   { bg: '#14468C', text: '#FFFFFF' },
+  purple: { bg: '#4B0A78', text: '#FFFFFF' },
+  brown:  { bg: '#5A3719', text: '#FFFFFF' },
+  black:  { bg: '#0A0A0A', text: '#F0F0F0' },
+  grey:   { bg: '#505050', text: '#FFFFFF' },
+  yellow: { bg: '#A0780A', text: '#111111' },
+  orange: { bg: '#A0500A', text: '#FFFFFF' },
+  green:  { bg: '#1E6432', text: '#FFFFFF' },
+};
+
 // ── Routes ────────────────────────────────────────────────────────────
 
 app.get('/health', (_req, res) => {
@@ -180,6 +207,153 @@ app.post('/door/validate', async (req, res) => {
     res.json(data);
   } catch (e) {
     res.json({ allow: false, reason: 'Service unavailable' });
+  }
+});
+
+// POST /pass/google — generate Google Wallet save link
+app.post('/pass/google', async (req, res) => {
+  const { apiSecret, memberData } = req.body;
+  if (apiSecret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' });
+  if (!memberData) return res.status(400).json({ error: 'memberData required' });
+
+  const serviceAccount = getGoogleServiceAccount();
+  if (!serviceAccount) return res.status(500).json({ error: 'Google service account not configured' });
+
+  try {
+    const { GoogleAuth } = require('google-auth-library');
+    const jwt = require('jsonwebtoken');
+
+    const belt = (memberData.belt || 'white').toLowerCase().trim();
+    const colors = GOOGLE_BELT_COLORS[belt] || GOOGLE_BELT_COLORS.black;
+    const beltDisplay = belt.charAt(0).toUpperCase() + belt.slice(1) + ' Belt';
+    const name = memberData.name || 'Member';
+    const email = (memberData.email || '').toLowerCase().trim();
+    const objectId = `${GOOGLE_ISSUER_ID}.${Buffer.from(email || name).toString('hex').substring(0, 20)}`;
+
+    const genericObject = {
+      id: objectId,
+      classId: GOOGLE_CLASS_ID,
+      genericType: 'GENERIC_TYPE_UNSPECIFIED',
+      hexBackgroundColor: colors.bg,
+      logo: {
+        sourceUri: {
+          uri: 'https://app.labyrinth.vision/icons/icon-192.png'
+        },
+        contentDescription: {
+          defaultValue: { language: 'en-US', value: 'Labyrinth BJJ' }
+        }
+      },
+      cardTitle: {
+        defaultValue: { language: 'en-US', value: 'Labyrinth BJJ' }
+      },
+      subheader: {
+        defaultValue: { language: 'en-US', value: beltDisplay }
+      },
+      header: {
+        defaultValue: { language: 'en-US', value: name }
+      },
+      textModulesData: [
+        {
+          id: 'membership',
+          header: 'Membership',
+          body: memberData.plan || memberData.membership || 'Active Member'
+        },
+        {
+          id: 'location',
+          header: 'Location',
+          body: 'Fulshear, TX'
+        }
+      ],
+      barcode: {
+        type: 'QR_CODE',
+        value: `lbjj:${name}:${belt}`,
+        alternateText: 'Scan to enter'
+      },
+      state: 'ACTIVE',
+      heroImage: {
+        sourceUri: {
+          uri: 'https://app.labyrinth.vision/icons/icon-512.png'
+        },
+        contentDescription: {
+          defaultValue: { language: 'en-US', value: 'Labyrinth BJJ' }
+        }
+      }
+    };
+
+    const claims = {
+      iss: serviceAccount.client_email,
+      aud: 'google',
+      origins: ['app.labyrinth.vision'],
+      typ: 'savetowallet',
+      payload: {
+        genericObjects: [genericObject]
+      }
+    };
+
+    const token = jwt.sign(claims, serviceAccount.private_key, { algorithm: 'RS256' });
+    const saveUrl = `https://pay.google.com/gp/v/save/${token}`;
+
+    res.json({ saveUrl });
+  } catch (e) {
+    console.error('Google Wallet error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /pass/google/test/:belt/:name — quick testing route
+app.get('/pass/google/test/:belt/:name', async (req, res) => {
+  const serviceAccount = getGoogleServiceAccount();
+  if (!serviceAccount) return res.status(500).json({ error: 'Google service account not configured' });
+
+  // Reuse the POST logic inline
+  req.body = {
+    apiSecret: API_SECRET,
+    memberData: {
+      name: decodeURIComponent(req.params.name),
+      belt: req.params.belt,
+      email: `test@labyrinth.vision`,
+      plan: 'Adult Unlimited'
+    }
+  };
+  // Forward to same logic by redirecting internally
+  const { GoogleAuth } = require('google-auth-library');
+  const jwt = require('jsonwebtoken');
+
+  try {
+    const belt = req.params.belt.toLowerCase();
+    const colors = GOOGLE_BELT_COLORS[belt] || GOOGLE_BELT_COLORS.black;
+    const beltDisplay = belt.charAt(0).toUpperCase() + belt.slice(1) + ' Belt';
+    const name = decodeURIComponent(req.params.name);
+    const objectId = `${GOOGLE_ISSUER_ID}.test${Date.now()}`;
+
+    const genericObject = {
+      id: objectId,
+      classId: GOOGLE_CLASS_ID,
+      genericType: 'GENERIC_TYPE_UNSPECIFIED',
+      hexBackgroundColor: colors.bg,
+      cardTitle: { defaultValue: { language: 'en-US', value: 'Labyrinth BJJ' } },
+      subheader: { defaultValue: { language: 'en-US', value: beltDisplay } },
+      header: { defaultValue: { language: 'en-US', value: name } },
+      textModulesData: [
+        { id: 'membership', header: 'Membership', body: 'Adult Unlimited' },
+        { id: 'location', header: 'Location', body: 'Fulshear, TX' }
+      ],
+      barcode: { type: 'QR_CODE', value: `lbjj:${name}:${belt}`, alternateText: 'Scan to enter' },
+      state: 'ACTIVE'
+    };
+
+    const claims = {
+      iss: serviceAccount.client_email,
+      aud: 'google',
+      origins: ['app.labyrinth.vision'],
+      typ: 'savetowallet',
+      payload: { genericObjects: [genericObject] }
+    };
+
+    const token = jwt.sign(claims, serviceAccount.private_key, { algorithm: 'RS256' });
+    res.redirect(`https://pay.google.com/gp/v/save/${token}`);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
