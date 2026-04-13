@@ -87,7 +87,7 @@ async function generatePass(member) {
 }
 
 // ── Google Wallet config ─────────────────────────────────────────────
-const GOOGLE_ISSUER_ID = process.env.GOOGLE_ISSUER_ID || '3388000000023113573';
+const GOOGLE_ISSUER_ID = process.env.GOOGLE_ISSUER_ID || '3388000000023101152';
 const GOOGLE_CLASS_SUFFIX = 'labyrinth_member';
 const GOOGLE_CLASS_ID = `${GOOGLE_ISSUER_ID}.${GOOGLE_CLASS_SUFFIX}`;
 
