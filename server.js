@@ -266,7 +266,7 @@ app.post('/pass/google', async (req, res) => {
       ],
       barcode: {
         type: 'QR_CODE',
-        value: `lbjj:${name}:${belt}`,
+        value: `lbjj:${makeToken(email)}:${email}`,
         alternateText: 'Scan to enter'
       },
       state: 'ACTIVE',
@@ -338,7 +338,7 @@ app.get('/pass/google/test/:belt/:name', async (req, res) => {
         { id: 'membership', header: 'Membership', body: 'Adult Unlimited' },
         { id: 'location', header: 'Location', body: 'Fulshear, TX' }
       ],
-      barcode: { type: 'QR_CODE', value: `lbjj:${name}:${belt}`, alternateText: 'Scan to enter' },
+      barcode: { type: 'QR_CODE', value: `lbjj:${makeToken('test@labyrinth.vision')}:test@labyrinth.vision`, alternateText: 'Scan to enter' },
       state: 'ACTIVE'
     };
 
