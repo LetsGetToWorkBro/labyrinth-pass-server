@@ -269,21 +269,14 @@ app.post('/pass/google', async (req, res) => {
     const beltDisplay = belt.charAt(0).toUpperCase() + belt.slice(1) + ' Belt';
     const name = memberData.name || 'Member';
     const email = (memberData.email || '').toLowerCase().trim();
-    const objectId = `${GOOGLE_ISSUER_ID}.${Buffer.from(email || name).toString('hex').substring(0, 20)}`;
+    // Use timestamp to ensure unique object ID per generation (avoids stale cached objects)
+    const objectId = `${GOOGLE_ISSUER_ID}.${Buffer.from(email || name).toString('hex').substring(0, 16)}${Date.now().toString(36)}`;
 
     const genericObject = {
       id: objectId,
       classId: GOOGLE_CLASS_ID,
       genericType: 'GENERIC_TYPE_UNSPECIFIED',
       hexBackgroundColor: colors.bg,
-      logo: {
-        sourceUri: {
-          uri: 'https://app.labyrinth.vision/icons/icon-192.png'
-        },
-        contentDescription: {
-          defaultValue: { language: 'en-US', value: 'Labyrinth BJJ' }
-        }
-      },
       cardTitle: {
         defaultValue: { language: 'en-US', value: 'Labyrinth BJJ' }
       },
@@ -310,16 +303,26 @@ app.post('/pass/google', async (req, res) => {
         value: `lbjj:${makeToken(email)}:${email}`,
         alternateText: 'Scan to enter'
       },
-      state: 'ACTIVE',
-      heroImage: {
-        sourceUri: {
-          uri: 'https://app.labyrinth.vision/icons/icon-512.png'
-        },
-        contentDescription: {
-          defaultValue: { language: 'en-US', value: 'Labyrinth BJJ' }
-        }
-      }
+      state: 'ACTIVE'
     };
+
+    // Pre-insert object via API (more reliable than JWT-only approach)
+    const auth = new GoogleAuth({
+      credentials: serviceAccount,
+      scopes: ['https://www.googleapis.com/auth/wallet_object.issuer']
+    });
+    const authClient = await auth.getClient();
+    const accessToken = await authClient.getAccessToken();
+
+    await fetch('https://walletobjects.googleapis.com/walletobjects/v1/genericObject', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + accessToken.token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(genericObject)
+    });
+    // (ignore insert errors — object may already exist, JWT will still work)
 
     const claims = {
       iss: serviceAccount.client_email,
@@ -327,7 +330,7 @@ app.post('/pass/google', async (req, res) => {
       origins: ['app.labyrinth.vision'],
       typ: 'savetowallet',
       payload: {
-        genericObjects: [genericObject]
+        genericObjects: [{ id: objectId, classId: GOOGLE_CLASS_ID }]
       }
     };
 
