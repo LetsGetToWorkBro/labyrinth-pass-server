@@ -139,6 +139,24 @@ app.get('/pass/test/:belt/:name', async (req, res) => {
 });
 
 // POST /pass/generate — called by app with member token
+// GET /pass/generate — iOS Safari direct navigation (query params)
+app.get('/pass/generate', async (req, res) => {
+  const { name, email, belt, plan, apiSecret } = req.query;
+  if (apiSecret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' });
+  const member = { name, email, belt: belt || 'white', plan: plan || '' };
+  try {
+    const { buffer, serial } = await generatePass(member);
+    res.set({
+      'Content-Type':        'application/vnd.apple.pkpass',
+      'Content-Disposition': `attachment; filename="labyrinth-${serial}.pkpass"`,
+      'Cache-Control':       'no-cache'
+    });
+    res.send(buffer);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/pass/generate', async (req, res) => {
   const { memberToken, apiSecret, memberData } = req.body;
 
