@@ -8,7 +8,7 @@
   "backgroundColor": "rgb(10,10,10)",
   "foregroundColor": "rgb(240,240,240)",
   "labelColor": "rgb(200,162,76)",
-  "generic": {
+  "storeCard": {
     "headerFields": [
       {
         "key": "belt",
@@ -64,7 +64,7 @@
       "format": "PKBarcodeFormatQR",
       "message": "PLACEHOLDER",
       "messageEncoding": "iso-8859-1",
-      "altText": "Scan to verify"
+      "altText": "Scan to enter"
     }
   ]
 }
