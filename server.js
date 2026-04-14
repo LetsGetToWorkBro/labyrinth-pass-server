@@ -58,6 +58,18 @@ async function generatePass(member) {
   const beltDisplay = belt.charAt(0).toUpperCase() + belt.slice(1) + ' Belt';
   const token  = `lbjj:${makeToken(email)}:${email}`;
 
+  // Swap in belt-specific strip images
+  const beltKey = ['white','blue','purple','brown','black','grey','yellow','orange','green'].includes(belt) ? belt : 'black';
+  const stripSrc    = path.join(__dirname, `strip-${beltKey}.png`);
+  const strip2xSrc  = path.join(__dirname, `strip@2x-${beltKey}.png`);
+  const strip3xSrc  = path.join(__dirname, `strip@3x-${beltKey}.png`);
+  const stripDst    = path.join(__dirname, 'labyrinth.pass', 'strip.png');
+  const strip2xDst  = path.join(__dirname, 'labyrinth.pass', 'strip@2x.png');
+  const strip3xDst  = path.join(__dirname, 'labyrinth.pass', 'strip@3x.png');
+  if (fs.existsSync(stripSrc))   fs.copyFileSync(stripSrc,   stripDst);
+  if (fs.existsSync(strip2xSrc)) fs.copyFileSync(strip2xSrc, strip2xDst);
+  if (fs.existsSync(strip3xSrc)) fs.copyFileSync(strip3xSrc, strip3xDst);
+
   const pass = await PKPass.from({
     model: path.join(__dirname, 'labyrinth.pass'),
     certificates: {
