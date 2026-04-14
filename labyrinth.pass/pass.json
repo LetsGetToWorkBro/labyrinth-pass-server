@@ -8,7 +8,15 @@
   "backgroundColor": "rgb(8,8,8)",
   "foregroundColor": "rgb(240,240,240)",
   "labelColor": "rgb(200,162,76)",
-  "generic": {
+  "barcodes": [
+    {
+      "format": "PKBarcodeFormatQR",
+      "message": "PLACEHOLDER",
+      "messageEncoding": "iso-8859-1",
+      "altText": "Scan to enter"
+    }
+  ],
+  "eventTicket": {
     "headerFields": [
       {
         "key": "belt",
@@ -40,7 +48,7 @@
       {
         "key": "tagline",
         "label": "",
-        "value": "迷宮 · Labyrinth Brazilian Jiu Jitsu"
+        "value": "\u8ff7\u5bae \u00b7 Labyrinth Brazilian Jiu Jitsu"
       },
       {
         "key": "website",
@@ -58,13 +66,5 @@
         "value": "Fulshear, TX"
       }
     ]
-  },
-  "barcodes": [
-    {
-      "format": "PKBarcodeFormatQR",
-      "message": "PLACEHOLDER",
-      "messageEncoding": "iso-8859-1",
-      "altText": "Scan to enter"
-    }
-  ]
+  }
 }
