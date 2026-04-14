@@ -303,7 +303,15 @@ app.post('/pass/google', async (req, res) => {
         value: `lbjj:${makeToken(email)}:${email}`,
         alternateText: 'Scan to enter'
       },
-      state: 'ACTIVE'
+      state: 'ACTIVE',
+      heroImage: {
+        sourceUri: {
+          uri: `https://app.labyrinth.vision/passes/belt-${belt}.jpg`
+        },
+        contentDescription: {
+          defaultValue: { language: 'en-US', value: `${beltDisplay} - Labyrinth BJJ` }
+        }
+      }
     };
 
     // Pre-insert object via API (more reliable than JWT-only approach)
