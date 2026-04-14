@@ -5,10 +5,10 @@
   "organizationName": "Labyrinth Brazilian Jiu Jitsu",
   "serialNumber": "PLACEHOLDER",
   "description": "Labyrinth BJJ Member Pass",
-  "backgroundColor": "rgb(10,10,10)",
+  "backgroundColor": "rgb(8,8,8)",
   "foregroundColor": "rgb(240,240,240)",
   "labelColor": "rgb(200,162,76)",
-  "storeCard": {
+  "generic": {
     "headerFields": [
       {
         "key": "belt",
