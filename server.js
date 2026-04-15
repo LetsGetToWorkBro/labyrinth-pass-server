@@ -60,9 +60,31 @@ const BELT_COLORS = {
   green:  { bg: 'rgb(30,100,50)',   fg: 'rgb(255,255,255)', label: 'rgb(180,255,200)' },
 };
 
+// 15-minute bucket token — changes every 15 min, valid for ~30 min
 function makeToken(email) {
-  const today = new Date().toISOString().split('T')[0];
-  return crypto.createHmac('sha256', API_SECRET).update(email + today).digest('hex');
+  const bucket = Math.floor(Date.now() / (15 * 60 * 1000));
+  return crypto.createHmac('sha256', API_SECRET).update(email + ':' + bucket).digest('hex');
+}
+
+function validateDoorToken(token, email) {
+  const now = Math.floor(Date.now() / (15 * 60 * 1000));
+  for (const bucket of [now, now - 1]) {
+    const expected = crypto.createHmac('sha256', API_SECRET)
+      .update(email + ':' + bucket).digest('hex');
+    try {
+      if (crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(token, 'hex'))) {
+        return true;
+      }
+    } catch { continue; }
+  }
+  return false;
+}
+
+function safeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  } catch { return false; }
 }
 
 // ── Generate pass ─────────────────────────────────────────────────────
@@ -222,18 +244,23 @@ app.post('/pass/generate', async (req, res) => {
   }
 });
 
+// GET /pass/token — fetch fresh QR token without regenerating the pass
+app.get('/pass/token', async (req, res) => {
+  const apiSecret = req.headers['x-api-secret'] || req.query.apiSecret;
+  if (!safeCompare(apiSecret, API_SECRET)) return res.status(401).json({ error: 'Unauthorized' });
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const token = makeToken(email);
+  const expiresInMs = (15 * 60 * 1000) - (Date.now() % (15 * 60 * 1000));
+  res.json({ token, expiresInMs });
+});
+
 // POST /door/validate — called by ESP32
 app.post('/door/validate', async (req, res) => {
   const { token, email, apiSecret } = req.body;
   if (apiSecret !== API_SECRET) return res.status(401).json({ allow: false });
 
-  const isValid = [-1, 0, 1].some(offset => {
-    const d = new Date();
-    d.setDate(d.getDate() + offset);
-    const expected = crypto.createHmac('sha256', API_SECRET)
-      .update(email + d.toISOString().split('T')[0]).digest('hex');
-    return expected === token;
-  });
+  const isValid = validateDoorToken(token, email);
 
   if (!isValid) return res.json({ allow: false, reason: 'Invalid token' });
 
