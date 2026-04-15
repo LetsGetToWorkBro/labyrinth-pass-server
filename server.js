@@ -186,8 +186,14 @@ const GOOGLE_BELT_COLORS = {
 
 // ── Routes ────────────────────────────────────────────────────────────
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', passType: PASS_TYPE_ID, team: TEAM_ID });
+// Health check — for uptime monitoring (no auth required)
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    ts: Date.now(),
+    version: process.env.npm_package_version || '1.0.0',
+    env: process.env.NODE_ENV || 'development',
+  });
 });
 
 // GET /pass/:email — quick link for testing (no auth, for dev)
