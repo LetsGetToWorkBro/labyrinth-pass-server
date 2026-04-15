@@ -184,6 +184,29 @@ const GOOGLE_BELT_COLORS = {
   green:  { bg: '#1E6432', text: '#FFFFFF' },
 };
 
+// ── Helpers ───────────────────────────────────────────────────────────
+
+// Fetch member profile from GAS using a session token (server-side only)
+async function fetchMemberByToken(memberToken) {
+  const gasRes = await fetch(GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ action: 'memberGetProfile', token: memberToken }),
+  });
+  const gasData = await gasRes.json();
+  return gasData.member || gasData.profile || null;
+}
+
+// Send a .pkpass buffer as a download response
+function sendPassBuffer(res, buffer, serial) {
+  res.set({
+    'Content-Type':        'application/vnd.apple.pkpass',
+    'Content-Disposition': `attachment; filename="labyrinth-${serial}.pkpass"`,
+    'Cache-Control':       'no-cache'
+  });
+  res.send(buffer);
+}
+
 // ── Routes ────────────────────────────────────────────────────────────
 
 // Health check — for uptime monitoring (no auth required)
@@ -219,56 +242,70 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-// POST /pass/generate — called by app with member token
-// GET /pass/generate — iOS Safari direct navigation (query params)
+// GET /pass/generate — iOS Safari direct navigation
+// Accepts memberToken (secure) or legacy apiSecret+params (deprecated)
 app.get('/pass/generate', passLimiter, async (req, res) => {
-  const { name, email, belt, plan } = req.query;
-  const apiSecret = req.headers['x-api-secret'] || req.query.apiSecret;
-  if (req.query.apiSecret) console.warn('DEPRECATION: apiSecret in query param, use x-api-secret header');
-  if (!safeCompare(apiSecret, API_SECRET)) return res.status(401).json({ error: 'Unauthorized' });
-  const member = { name, email, belt: belt || 'white', plan: plan || '' };
+  const { memberToken, name, email, belt, plan } = req.query;
+
+  let member;
+  if (memberToken) {
+    // New secure path: fetch member from GAS using session token
+    try {
+      member = await fetchMemberByToken(memberToken);
+      if (!member) return res.status(401).json({ error: 'Invalid or expired token' });
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to fetch member' });
+    }
+  } else {
+    // Legacy path (deprecated — will be removed)
+    const apiSecret = req.headers['x-api-secret'] || req.query.apiSecret;
+    if (!safeCompare(apiSecret, API_SECRET)) return res.status(401).json({ error: 'Unauthorized' });
+    member = { name, email, belt: belt || 'white', plan: plan || '' };
+  }
+
   try {
     const { buffer, serial } = await generatePass(member);
-    res.set({
-      'Content-Type':        'application/vnd.apple.pkpass',
-      'Content-Disposition': `attachment; filename="labyrinth-${serial}.pkpass"`,
-      'Cache-Control':       'no-cache'
-    });
-    res.send(buffer);
+    sendPassBuffer(res, buffer, serial);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.post('/pass/generate', passLimiter, async (req, res) => {
-  const { memberToken, apiSecret } = req.body;
-
-  if (!safeCompare(apiSecret, API_SECRET)) return res.status(401).json({ error: 'Unauthorized' });
-
+// POST /pass/apple — new secure endpoint, no apiSecret needed
+// Client sends only memberToken; server uses API_SECRET internally
+app.post('/pass/apple', passLimiter, async (req, res) => {
+  const { memberToken } = req.body;
   if (!memberToken) return res.status(400).json({ error: 'memberToken required' });
 
-  let member;
   try {
-    const gasRes = await fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'memberGetProfile', token: memberToken }),
-    });
-    const gasData = await gasRes.json();
-    if (!gasData.member && !gasData.profile) return res.status(401).json({ error: 'Invalid member token' });
-    member = gasData.member || gasData.profile;
+    const member = await fetchMemberByToken(memberToken);
+    if (!member) return res.status(401).json({ error: 'Invalid or expired token' });
+    const { buffer, serial } = await generatePass(member);
+    sendPassBuffer(res, buffer, serial);
   } catch (e) {
-    return res.status(500).json({ error: 'Failed to fetch member: ' + e.message });
+    res.status(500).json({ error: 'Pass generation failed' });
   }
+});
+
+// POST /pass/generate — legacy endpoint (backward compat)
+// Now accepts memberToken without apiSecret
+app.post('/pass/generate', passLimiter, async (req, res) => {
+  const { memberToken, memberData } = req.body;
+
+  let member = memberData;
+  if (!member && memberToken) {
+    try {
+      member = await fetchMemberByToken(memberToken);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to fetch member: ' + e.message });
+    }
+  }
+
+  if (!member) return res.status(400).json({ error: 'Member data or memberToken required' });
 
   try {
     const { buffer, serial } = await generatePass(member);
-    res.set({
-      'Content-Type':        'application/vnd.apple.pkpass',
-      'Content-Disposition': `attachment; filename="labyrinth-${serial}.pkpass"`,
-      'Cache-Control':       'no-cache'
-    });
-    res.send(buffer);
+    sendPassBuffer(res, buffer, serial);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -316,10 +353,21 @@ app.post('/door/validate', doorLimiter, async (req, res) => {
 });
 
 // POST /pass/google — generate Google Wallet save link
-app.post('/pass/google', async (req, res) => {
-  const { apiSecret, memberData } = req.body;
-  if (!safeCompare(apiSecret, API_SECRET)) return res.status(401).json({ error: 'Unauthorized' });
-  if (!memberData) return res.status(400).json({ error: 'memberData required' });
+// Accepts memberToken (secure) or legacy apiSecret+memberData (deprecated)
+app.post('/pass/google', passLimiter, async (req, res) => {
+  const { memberToken, memberData } = req.body;
+
+  let resolvedMemberData = memberData;
+  if (memberToken && !resolvedMemberData) {
+    try {
+      resolvedMemberData = await fetchMemberByToken(memberToken);
+      if (!resolvedMemberData) return res.status(401).json({ error: 'Invalid or expired token' });
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to fetch member' });
+    }
+  } else if (!memberData) {
+    return res.status(400).json({ error: 'memberToken or memberData required' });
+  }
 
   const serviceAccount = getGoogleServiceAccount();
   if (!serviceAccount) return res.status(500).json({ error: 'Google service account not configured' });
@@ -328,11 +376,11 @@ app.post('/pass/google', async (req, res) => {
     const { GoogleAuth } = require('google-auth-library');
     const jwt = require('jsonwebtoken');
 
-    const belt = (memberData.belt || 'white').toLowerCase().trim();
+    const belt = (resolvedMemberData.belt || resolvedMemberData.Belt || 'white').toLowerCase().trim();
     const colors = GOOGLE_BELT_COLORS[belt] || GOOGLE_BELT_COLORS.black;
     const beltDisplay = belt.charAt(0).toUpperCase() + belt.slice(1) + ' Belt';
-    const name = memberData.name || 'Member';
-    const email = (memberData.email || '').toLowerCase().trim();
+    const name = resolvedMemberData.name || resolvedMemberData.Name || 'Member';
+    const email = (resolvedMemberData.email || resolvedMemberData.Email || '').toLowerCase().trim();
     // Use timestamp to ensure unique object ID per generation (avoids stale cached objects)
     const objectId = `${GOOGLE_ISSUER_ID}.${Buffer.from(email || name).toString('hex').substring(0, 16)}${Date.now().toString(36)}`;
 
@@ -354,7 +402,7 @@ app.post('/pass/google', async (req, res) => {
         {
           id: 'membership',
           header: 'Membership',
-          body: memberData.plan || memberData.membership || 'Active Member'
+          body: resolvedMemberData.plan || resolvedMemberData.membership || resolvedMemberData.Plan || resolvedMemberData.Membership || 'Active Member'
         },
         {
           id: 'location',
