@@ -9,12 +9,23 @@ const fs         = require('fs');
 const path       = require('path');
 const crypto     = require('crypto');
 const fetch      = require('node-fetch');
+const rateLimit  = require('express-rate-limit');
 
 const app = express();
 
 // ── CORS ─────────────────────────────────────────────────────────────
+const ALLOWED_ORIGINS = [
+  'https://app.labyrinth.vision',
+  'https://labyrinth.vision',
+  'https://admin.labyrinth.vision',
+];
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
@@ -22,6 +33,10 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// ── Rate limiting ────────────────────────────────────────────────────
+const passLimiter = rateLimit({ windowMs: 60_000, max: 10, message: { error: 'Too many requests' } });
+const doorLimiter = rateLimit({ windowMs: 60_000, max: 30, message: { error: 'Too many requests' } });
 
 // ── Static assets ────────────────────────────────────────────────────
 // Pass images — immutable (never change)
@@ -34,7 +49,11 @@ app.use('/passes', express.static(path.join(__dirname, 'public/passes'), {
 const PASS_TYPE_ID = 'pass.vision.labyrinth.member';
 const TEAM_ID      = 'CA2KJBHNWW';
 const GAS_URL      = 'https://script.google.com/macros/s/AKfycbwkxkV6XlqKy3DDot_MTfb40WeAfd6KMgBwgcrCNStEFM5vcAQNYG9eR2OOFpCwJ3AJ/exec';
-const API_SECRET   = process.env.PASS_API_SECRET || 'lbjj-pass-secret-2026';
+const API_SECRET = process.env.PASS_API_SECRET;
+if (!API_SECRET) {
+  console.error('FATAL: PASS_API_SECRET environment variable is not set');
+  process.exit(1);
+}
 
 // Certs — loaded from env vars (base64) or files (local dev)
 function loadCert(envVar, filePath) {
@@ -172,29 +191,33 @@ app.get('/health', (_req, res) => {
 });
 
 // GET /pass/:email — quick link for testing (no auth, for dev)
-app.get('/pass/test/:belt/:name', async (req, res) => {
-  try {
-    const { buffer, serial } = await generatePass({
-      name:  decodeURIComponent(req.params.name),
-      belt:  req.params.belt,
-      email: `test-${Date.now()}@labyrinth.vision`
-    });
-    res.set({
-      'Content-Type':        'application/vnd.apple.pkpass',
-      'Content-Disposition': `attachment; filename="labyrinth-${serial}.pkpass"`,
-      'Cache-Control':       'no-cache'
-    });
-    res.send(buffer);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/pass/test/:belt/:name', async (req, res) => {
+    try {
+      const { buffer, serial } = await generatePass({
+        name:  decodeURIComponent(req.params.name),
+        belt:  req.params.belt,
+        email: `test-${Date.now()}@labyrinth.vision`
+      });
+      res.set({
+        'Content-Type':        'application/vnd.apple.pkpass',
+        'Content-Disposition': `attachment; filename="labyrinth-${serial}.pkpass"`,
+        'Cache-Control':       'no-cache'
+      });
+      res.send(buffer);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+}
 
 // POST /pass/generate — called by app with member token
 // GET /pass/generate — iOS Safari direct navigation (query params)
-app.get('/pass/generate', async (req, res) => {
-  const { name, email, belt, plan, apiSecret } = req.query;
-  if (apiSecret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' });
+app.get('/pass/generate', passLimiter, async (req, res) => {
+  const { name, email, belt, plan } = req.query;
+  const apiSecret = req.headers['x-api-secret'] || req.query.apiSecret;
+  if (req.query.apiSecret) console.warn('DEPRECATION: apiSecret in query param, use x-api-secret header');
+  if (!safeCompare(apiSecret, API_SECRET)) return res.status(401).json({ error: 'Unauthorized' });
   const member = { name, email, belt: belt || 'white', plan: plan || '' };
   try {
     const { buffer, serial } = await generatePass(member);
@@ -209,27 +232,26 @@ app.get('/pass/generate', async (req, res) => {
   }
 });
 
-app.post('/pass/generate', async (req, res) => {
-  const { memberToken, apiSecret, memberData } = req.body;
+app.post('/pass/generate', passLimiter, async (req, res) => {
+  const { memberToken, apiSecret } = req.body;
 
-  if (apiSecret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' });
+  if (!safeCompare(apiSecret, API_SECRET)) return res.status(401).json({ error: 'Unauthorized' });
 
-  let member = memberData;
-  if (!member && memberToken) {
-    try {
-      const r = await fetch(GAS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'memberGetProfile', token: memberToken })
-      });
-      const d = await r.json();
-      if (d.member) member = d.member;
-    } catch (e) {
-      return res.status(500).json({ error: 'Failed to fetch member: ' + e.message });
-    }
+  if (!memberToken) return res.status(400).json({ error: 'memberToken required' });
+
+  let member;
+  try {
+    const gasRes = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'memberGetProfile', token: memberToken }),
+    });
+    const gasData = await gasRes.json();
+    if (!gasData.member && !gasData.profile) return res.status(401).json({ error: 'Invalid member token' });
+    member = gasData.member || gasData.profile;
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to fetch member: ' + e.message });
   }
-
-  if (!member) return res.status(400).json({ error: 'Member data required' });
 
   try {
     const { buffer, serial } = await generatePass(member);
@@ -256,9 +278,9 @@ app.get('/pass/token', async (req, res) => {
 });
 
 // POST /door/validate — called by ESP32
-app.post('/door/validate', async (req, res) => {
+app.post('/door/validate', doorLimiter, async (req, res) => {
   const { token, email, apiSecret } = req.body;
-  if (apiSecret !== API_SECRET) return res.status(401).json({ allow: false });
+  if (!safeCompare(apiSecret, API_SECRET)) return res.status(401).json({ allow: false });
 
   const isValid = validateDoorToken(token, email);
 
@@ -288,7 +310,7 @@ app.post('/door/validate', async (req, res) => {
 // POST /pass/google — generate Google Wallet save link
 app.post('/pass/google', async (req, res) => {
   const { apiSecret, memberData } = req.body;
-  if (apiSecret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' });
+  if (!safeCompare(apiSecret, API_SECRET)) return res.status(401).json({ error: 'Unauthorized' });
   if (!memberData) return res.status(400).json({ error: 'memberData required' });
 
   const serviceAccount = getGoogleServiceAccount();
@@ -383,61 +405,63 @@ app.post('/pass/google', async (req, res) => {
 });
 
 // GET /pass/google/test/:belt/:name — quick testing route
-app.get('/pass/google/test/:belt/:name', async (req, res) => {
-  const serviceAccount = getGoogleServiceAccount();
-  if (!serviceAccount) return res.status(500).json({ error: 'Google service account not configured' });
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/pass/google/test/:belt/:name', async (req, res) => {
+    const serviceAccount = getGoogleServiceAccount();
+    if (!serviceAccount) return res.status(500).json({ error: 'Google service account not configured' });
 
-  // Reuse the POST logic inline
-  req.body = {
-    apiSecret: API_SECRET,
-    memberData: {
-      name: decodeURIComponent(req.params.name),
-      belt: req.params.belt,
-      email: `test@labyrinth.vision`,
-      plan: 'Adult Unlimited'
+    // Reuse the POST logic inline
+    req.body = {
+      apiSecret: API_SECRET,
+      memberData: {
+        name: decodeURIComponent(req.params.name),
+        belt: req.params.belt,
+        email: `test@labyrinth.vision`,
+        plan: 'Adult Unlimited'
+      }
+    };
+    // Forward to same logic by redirecting internally
+    const { GoogleAuth } = require('google-auth-library');
+    const jwt = require('jsonwebtoken');
+
+    try {
+      const belt = req.params.belt.toLowerCase();
+      const colors = GOOGLE_BELT_COLORS[belt] || GOOGLE_BELT_COLORS.black;
+      const beltDisplay = belt.charAt(0).toUpperCase() + belt.slice(1) + ' Belt';
+      const name = decodeURIComponent(req.params.name);
+      const objectId = `${GOOGLE_ISSUER_ID}.test${Date.now()}`;
+
+      const genericObject = {
+        id: objectId,
+        classId: GOOGLE_CLASS_ID,
+        genericType: 'GENERIC_TYPE_UNSPECIFIED',
+        hexBackgroundColor: colors.bg,
+        cardTitle: { defaultValue: { language: 'en-US', value: 'Labyrinth BJJ' } },
+        subheader: { defaultValue: { language: 'en-US', value: beltDisplay } },
+        header: { defaultValue: { language: 'en-US', value: name } },
+        textModulesData: [
+          { id: 'membership', header: 'Membership', body: 'Adult Unlimited' },
+          { id: 'location', header: 'Location', body: 'Fulshear, TX' }
+        ],
+        barcode: { type: 'QR_CODE', value: `lbjj:${makeToken('test@labyrinth.vision')}:test@labyrinth.vision`, alternateText: 'Scan to enter' },
+        state: 'ACTIVE'
+      };
+
+      const claims = {
+        iss: serviceAccount.client_email,
+        aud: 'google',
+        origins: ['app.labyrinth.vision'],
+        typ: 'savetowallet',
+        payload: { genericObjects: [genericObject] }
+      };
+
+      const token = jwt.sign(claims, serviceAccount.private_key, { algorithm: 'RS256' });
+      res.redirect(`https://pay.google.com/gp/v/save/${token}`);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
     }
-  };
-  // Forward to same logic by redirecting internally
-  const { GoogleAuth } = require('google-auth-library');
-  const jwt = require('jsonwebtoken');
-
-  try {
-    const belt = req.params.belt.toLowerCase();
-    const colors = GOOGLE_BELT_COLORS[belt] || GOOGLE_BELT_COLORS.black;
-    const beltDisplay = belt.charAt(0).toUpperCase() + belt.slice(1) + ' Belt';
-    const name = decodeURIComponent(req.params.name);
-    const objectId = `${GOOGLE_ISSUER_ID}.test${Date.now()}`;
-
-    const genericObject = {
-      id: objectId,
-      classId: GOOGLE_CLASS_ID,
-      genericType: 'GENERIC_TYPE_UNSPECIFIED',
-      hexBackgroundColor: colors.bg,
-      cardTitle: { defaultValue: { language: 'en-US', value: 'Labyrinth BJJ' } },
-      subheader: { defaultValue: { language: 'en-US', value: beltDisplay } },
-      header: { defaultValue: { language: 'en-US', value: name } },
-      textModulesData: [
-        { id: 'membership', header: 'Membership', body: 'Adult Unlimited' },
-        { id: 'location', header: 'Location', body: 'Fulshear, TX' }
-      ],
-      barcode: { type: 'QR_CODE', value: `lbjj:${makeToken('test@labyrinth.vision')}:test@labyrinth.vision`, alternateText: 'Scan to enter' },
-      state: 'ACTIVE'
-    };
-
-    const claims = {
-      iss: serviceAccount.client_email,
-      aud: 'google',
-      origins: ['app.labyrinth.vision'],
-      typ: 'savetowallet',
-      payload: { genericObjects: [genericObject] }
-    };
-
-    const token = jwt.sign(claims, serviceAccount.private_key, { algorithm: 'RS256' });
-    res.redirect(`https://pay.google.com/gp/v/save/${token}`);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+  });
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Labyrinth Pass Server on port ${PORT}`));
