@@ -23,6 +23,13 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+// ── Static assets ────────────────────────────────────────────────────
+// Pass images — immutable (never change)
+app.use('/passes', express.static(path.join(__dirname, 'public/passes'), {
+  maxAge: '1y',
+  immutable: true,
+}));
+
 // ── Config ───────────────────────────────────────────────────────────
 const PASS_TYPE_ID = 'pass.vision.labyrinth.member';
 const TEAM_ID      = 'CA2KJBHNWW';
