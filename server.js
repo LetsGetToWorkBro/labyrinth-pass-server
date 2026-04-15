@@ -188,12 +188,14 @@ const GOOGLE_BELT_COLORS = {
 
 // Health check — for uptime monitoring (no auth required)
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    ts: Date.now(),
-    version: process.env.npm_package_version || '1.0.0',
-    env: process.env.NODE_ENV || 'development',
-  });
+  const response = { status: 'ok' };
+  // Only include debug info in non-production environments
+  if (process.env.NODE_ENV !== 'production') {
+    response.ts = Date.now();
+    response.version = process.env.npm_package_version || '1.0.0';
+    response.env = process.env.NODE_ENV;
+  }
+  res.json(response);
 });
 
 // GET /pass/:email — quick link for testing (no auth, for dev)
