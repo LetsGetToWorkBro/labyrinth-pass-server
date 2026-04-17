@@ -48,7 +48,7 @@ app.use('/passes', express.static(path.join(__dirname, 'public/passes'), {
 // ── Config ───────────────────────────────────────────────────────────
 const PASS_TYPE_ID = 'pass.vision.labyrinth.member';
 const TEAM_ID      = 'CA2KJBHNWW';
-const GAS_URL      = 'https://script.google.com/macros/s/AKfycbwkxkV6XlqKy3DDot_MTfb40WeAfd6KMgBwgcrCNStEFM5vcAQNYG9eR2OOFpCwJ3AJ/exec';
+const GAS_URL      = 'https://script.google.com/macros/s/AKfycbwybO9_NBFjSYmpDWVjM0TloiyQl5-oI7UZxgAHDILYHjhez8RUp7ncOgwKLoEHa6kj/exec';
 const API_SECRET = process.env.PASS_API_SECRET;
 if (!API_SECRET) {
   console.error('FATAL: PASS_API_SECRET environment variable is not set');
